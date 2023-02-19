@@ -6,57 +6,65 @@ require('dotenv').config()
 app.use(express.urlencoded({extended: false}))
 app.use(express.json())
 
-function VerifyToken(req, res, next) {
-    const bearerHeader = req.headers['cookie']
-    //console.log(req.headers['cookie'])
-    //console.log('test ' + JSON.stringify(req.headers))
-    if (typeof bearerHeader !== 'undefined') {
-        const bearerToken = bearerHeader.split('%20')[1]
-        req.token = bearerToken
-        console.log(bearerHeader)
-        console.log(bearerToken)
-        next()
-    } else {
-        res.sendStatus(403)
-    } 
+const accessTokenSecret = process.env.ACCESS_TOKEN_SECRET
+const refreshTokenSecret = process.env.REFRESH_TOKEN_SECRET
+
+function generateToken(user) {
+    const accessToken = jwt.sign(user, accessTokenSecret, {expiresIn: '10s'})
+    const refreshToken = jwt.sign(user, refreshTokenSecret, {expiresIn: '1h'})
+    return {accessToken, refreshToken}
 }
 
-app.get('/', VerifyToken, (req, res) =>{
-    jwt.verify(req.token, process.env.ACCESS_TOKEN_SECRET, (err, authData) =>{
+//Middelware 
+function VerifyToken(req, res, next) {
+    
+    if (!req.headers.cookie) {
+        res.sendStatus(403)
+    }
+    
+    const cookie = (req.headers.cookie).split(';')
+
+    const accessToken = cookie[0].split('=')[1]
+    const refreshToken = cookie[1].trim().split('=')[1]
+
+    if(!accessToken){
+        res.sendStatus(403)
+    }
+
+    jwt.verify(accessToken, accessTokenSecret, (err) =>{
         if (err) {
-            console.log('site error')
-            res.sendStatus(403)
-        } else {
-            res.json ({
-                message: "posts created...",
-                authData
+            jwt.verify(refreshToken, refreshTokenSecret, (err, authData) => {
+                if (err) { 
+                    console.log(err)
+                    res.redirect('/login') }
+                
+                const user = { id: 1, role: 'admin'}
+                const tokens = generateToken(user)
+                res.cookie('accessToken', tokens.accessToken, { httpOnly: true, secure: true})
+                next()
             })
-        }
+        } else { next() } 
     })
-    //res.sendFile(__dirname+ '/views/index.html')
+}
+
+//Frontpage
+app.get('/', VerifyToken, (req, res) =>{
+    res.sendFile(__dirname+ '/views/index.html')
 })
 
 app.get('/login', (req, res) =>{
     res.sendFile(__dirname+ '/views/login.html')
 })
 
-
 app.post('/login', (req, res) =>{
-    const user = {
-        id: 1,
-        username: 'Test',
-        password: '1234'
-    }
-    
-    jwt.sign ({user: user}, process.env.ACCESS_TOKEN_SECRET, (err, token) => {
-    
-        res.cookie('authorization', `Bearer ${token}`, {httpOnly: true, secure: true})
-        res.redirect('/')
-        //res.json({token,
-        //})
-    })
+    const user = { id: 1, role: 'admin'}
+    const tokens = generateToken(user)
+    res.cookie('accessToken', tokens.accessToken, { httpOnly: true, secure: true})
+    res.cookie('refreshToken', tokens.refreshToken, { httpOnly: true, secure: true})
+    res.redirect('/')
 })
 
+//If the site doesen't exist
 app.get('*', (req, res) => {
     res.sendFile(__dirname+ '/views/error.html')
 })
@@ -64,4 +72,3 @@ app.get('*', (req, res) => {
 app.listen(3000), () =>{
     console.log("listening")
 } 
-
